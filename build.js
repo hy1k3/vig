@@ -1152,7 +1152,7 @@ function feedPage(posts) {
     <main class="feed" data-show="!$gallery">
       ${cards}
     </main>
-    <main class="feed" data-show="$gallery">
+    <main class="gallery-main" data-show="$gallery">
       ${galleryGrid(posts)}
     </main>
     </div>
@@ -1419,19 +1419,19 @@ const CSS = `/* vig — Video Gallery Styles (mirrors mig's dark IG-style theme)
   /* Grid has its own breakpoints — chrome (top nav, stories, view toggle,
      bottom nav, feed) stays in the 470px mobile-app frame for a focused look,
      while the grid breaks out to a cinematic content area on bigger viewports. */
-  --grid-max-w: 470px;
   --grid-cols: 2;
   --nav-h: 54px;
   --bottom-h: 50px;
 }
 
-/* Grid scales width AND column count with viewport. Column count matters
-   because horizontals span 2 cells: with only 2 cols the H always covers
-   the whole row, collapsing the grid into a stack for landscape-heavy
-   collections. More cols = mixed-content layouts breathe properly. */
-@media (min-width: 720px)  { :root { --grid-max-w: 720px;  --grid-cols: 3; } }
-@media (min-width: 1100px) { :root { --grid-max-w: 1100px; --grid-cols: 4; } }
-@media (min-width: 1500px) { :root { --grid-max-w: 1500px; --grid-cols: 5; } }
+/* Grid column count scales with viewport. Horizontals span 2 cells, so with
+   only 2 cols every H covers a whole row → stack-feel for landscape-heavy
+   collections. More cols = mixed-content layouts breathe. */
+@media (min-width: 720px)  { :root { --grid-cols: 3; } }
+@media (min-width: 1100px) { :root { --grid-cols: 4; } }
+@media (min-width: 1500px) { :root { --grid-cols: 5; } }
+@media (min-width: 1900px) { :root { --grid-cols: 6; } }
+@media (min-width: 2400px) { :root { --grid-cols: 7; } }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -1703,26 +1703,31 @@ img, video { display: block; width: 100%; height: auto; }
 
 /* ─── Gallery Grid ─────────────────────────────────────────────────── */
 /* Square base cell. Vertical → 1×2, horizontal → 2×1 (both natural shapes,
-   no crops). Cinematic black background, edge-to-edge cells. The chrome
-   above and below stays mobile-app-narrow (--max-w); the grid breaks out
-   to its own --grid-max-w on bigger viewports for that "premium content"
-   feel — minimalist frame around a wide content canvas. */
+   no crops). The grid lives in .gallery-main which is NOT capped at the
+   chrome's --max-w — so on desktop the grid spans the full browser window
+   while the chrome (top nav, stories, view toggle, bottom nav, feed) stays
+   in its 470px mobile-app frame. Minimal padding for true edge-to-edge feel.
+   dense packing backfills holes left by 2-col-wide horizontals. */
+.gallery-main {
+  width: 100%;
+  padding-bottom: calc(var(--bottom-h) + 24px);
+}
 .gallery-grid {
   --grid-gap: 2px;
+  --grid-edge: 0px;   /* edge-to-edge by default; bump if you want a margin */
   display: grid;
   grid-template-columns: repeat(var(--grid-cols), 1fr);
+  /* Row height = column width. Subtract a small fudge so an OS scrollbar
+     doesn't push the grid into a horizontal scroll. */
   grid-auto-rows: calc(
-    (min(100vw, var(--grid-max-w)) - (var(--grid-cols) - 1) * var(--grid-gap))
+    (100vw - 17px - 2 * var(--grid-edge) - (var(--grid-cols) - 1) * var(--grid-gap))
     / var(--grid-cols)
   );
-  /* dense packing — backfills the holes left by 2-col-wide horizontals so
-     the grid is dense even when content is e.g. mostly landscape. */
   grid-auto-flow: dense;
   gap: var(--grid-gap);
   width: 100%;
-  max-width: var(--grid-max-w);
-  margin: 0 auto;
-  padding-bottom: calc(var(--bottom-h) + 24px);
+  margin: 0;
+  padding: 0 var(--grid-edge);
 }
 .grid-cell {
   position: relative;
@@ -1801,7 +1806,9 @@ img, video { display: block; width: 100%; height: auto; }
 
 /* ─── Responsive ──────────────────────────────────────── */
 @media (min-width: 480px) {
-  .feed, .detail-page, .nav-top, .stories-bar, .view-toggle, .gallery-grid {
+  /* Mobile-app frame outline for the chrome and feed — NOT the grid, which
+     breaks out to full browser width. */
+  .feed, .detail-page, .nav-top, .stories-bar, .view-toggle {
     border-left: 1px solid var(--border);
     border-right: 1px solid var(--border);
   }
