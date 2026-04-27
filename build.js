@@ -1091,22 +1091,22 @@ function detailPage(post) {
 // ─── Template: Gallery Grid ──────────────────────────────────────────────────
 
 function galleryGrid(posts) {
-  // Aspect-symmetric layout on a square base cell:
-  //   - Vertical (h > w):  1 col × 2 rows  → 1:2 portrait, fits 9:16 cleanly
-  //   - Horizontal (w ≥ h): 2 cols × 1 row → 2:1 landscape, fits 16:9 cleanly
-  // Rows always align across columns because both shapes are integer multiples
-  // of one column-width.
+  // Cell sizing on a uniform column-width:
+  //   - Horizontal (w ≥ h): 1 col × 1 row (square, cropped to fit)
+  //   - Vertical   (h > w): 1 col × 2 rows (1:2 portrait, fits 9:16 cleanly)
+  // Same column width for every cell, only verticals go double-tall — keeps the
+  // grid rhythm tight without huge 2-col-wide landscape cells.
   const cells = posts
     .map((post) => {
       const isVertical = post.dimensions && post.dimensions.h > post.dimensions.w;
-      const spanStyle = isVertical ? "grid-row: span 2" : "grid-column: span 2";
+      const spanStyle = isVertical ? ' style="grid-row: span 2"' : "";
       const starts = post.previewPlan ? post.previewPlan.ranges.map((r) => r.start) : [];
       const cums = previewCums(post.previewPlan);
       const thumb = post.hasThumb
         ? hotShots(`post/${post.slug}`, post.title, "grid", post.previewCount || 1, starts, cums)
         : `<div class="grid-placeholder">${escapeHtml(folderInitial(post.folder))}</div>`;
       return `
-      <a href="post/${post.slug}/index.html" class="grid-cell" style="${spanStyle}">
+      <a href="post/${post.slug}/index.html" class="grid-cell"${spanStyle}>
         ${thumb}
         <div class="grid-overlay">
           <span class="grid-stat">${escapeHtml(post.title)}</span>
