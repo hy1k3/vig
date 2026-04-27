@@ -1416,16 +1416,17 @@ const CSS = `/* vig — Video Gallery Styles (mirrors mig's dark IG-style theme)
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --max-w: 470px;
   --feed-card-max: 470px;
+  /* Grid has its own breakpoints — chrome (top nav, stories, view toggle,
+     bottom nav, feed) stays in the 470px mobile-app frame for a focused look,
+     while the grid breaks out to a cinematic content area on bigger viewports. */
+  --grid-max-w: 470px;
   --nav-h: 54px;
   --bottom-h: 50px;
 }
 
-/* Desktop: widen the whole frame so the grid can show more columns at once.
-   Feed cards stay narrow (capped via --feed-card-max) so 9:16 portraits
-   don't grow to fill the screen. */
-@media (min-width: 700px)  { :root { --max-w: 700px;  } }
-@media (min-width: 1000px) { :root { --max-w: 950px;  } }
-@media (min-width: 1400px) { :root { --max-w: 1200px; } }
+@media (min-width: 720px)  { :root { --grid-max-w: 720px;  } }
+@media (min-width: 1100px) { :root { --grid-max-w: 1100px; } }
+@media (min-width: 1500px) { :root { --grid-max-w: 1500px; } }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -1695,44 +1696,31 @@ img, video { display: block; width: 100%; height: auto; }
   border-bottom-color: var(--text);
 }
 
-/* ─── Gallery Grid (aspect-symmetric, with breathing room) ──────────── */
-/* Square base cell. Vertical → 1×2, horizontal → 2×1 — both natural shapes.
-   Generous gaps + padding + soft shadows + hover-lift give a more curated
-   feel than a tight mobile-cramped grid. */
+/* ─── Gallery Grid ─────────────────────────────────────────────────── */
+/* Square base cell. Vertical → 1×2, horizontal → 2×1 (both natural shapes,
+   no crops). Cinematic black background, edge-to-edge cells. The chrome
+   above and below stays mobile-app-narrow (--max-w); the grid breaks out
+   to its own --grid-max-w on bigger viewports for that "premium content"
+   feel — minimalist frame around a wide content canvas. */
 .gallery-grid {
   --grid-cols: 2;
-  --grid-gap: 8px;
-  --grid-pad: 12px;
+  --grid-gap: 2px;
   display: grid;
   grid-template-columns: repeat(var(--grid-cols), 1fr);
-  /* Row height = column width, computed from the actual usable width
-     (frame width − padding − gap) so 1×2 cells are precisely 1:2. */
   grid-auto-rows: calc(
-    (min(100vw, var(--max-w)) - 2 * var(--grid-pad) - (var(--grid-cols) - 1) * var(--grid-gap))
+    (min(100vw, var(--grid-max-w)) - (var(--grid-cols) - 1) * var(--grid-gap))
     / var(--grid-cols)
   );
   gap: var(--grid-gap);
   width: 100%;
-  max-width: var(--max-w);
+  max-width: var(--grid-max-w);
   margin: 0 auto;
-  padding: var(--grid-pad) var(--grid-pad) calc(var(--bottom-h) + 24px);
+  padding-bottom: calc(var(--bottom-h) + 24px);
 }
 .grid-cell {
   position: relative;
   background: var(--bg-elevated);
   overflow: hidden;
-  border-radius: 8px;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.4),
-    0 4px 14px rgba(0, 0, 0, 0.25);
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
-}
-.grid-cell:hover {
-  transform: translateY(-2px) scale(1.015);
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.5),
-    0 12px 32px rgba(0, 0, 0, 0.4);
-  z-index: 2;
 }
 .grid-cell .grid-placeholder {
   width: 100%;
@@ -1751,27 +1739,22 @@ img, video { display: block; width: 100%; height: auto; }
   right: 8px;
   filter: drop-shadow(0 1px 3px rgba(0,0,0,0.5));
 }
-/* Always-visible title hint — strengthens on hover. The bottom gradient
-   gives the cells a Netflix-card feel: identifiable at a glance without
-   mousing over. */
 .grid-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0) 55%);
+  background: linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 50%);
   display: flex;
   align-items: flex-end;
-  padding: 10px 12px;
-  pointer-events: none;
-  opacity: 0.75;
-  transition: opacity 0.18s ease;
+  padding: 8px;
+  opacity: 0;
+  transition: opacity 0.15s;
 }
 .grid-cell:hover .grid-overlay { opacity: 1; }
 .grid-stat {
-  color: rgba(255, 255, 255, 0.92);
-  font-weight: 500;
-  font-size: 12px;
-  letter-spacing: 0.1px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  color: white;
+  font-weight: 600;
+  font-size: 11px;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
