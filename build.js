@@ -1102,14 +1102,14 @@ function detailPage(post) {
 function galleryGrid(posts) {
   // Three cell sizes for visual rhythm in a max-3-col grid:
   //   - Vertical (h > w):                       1 col × 2 rows  (portrait)
-  //   - Horizontal w/ slugHash%4 == 0 (~25%):   2 cols × 2 rows (big square)
+  //   - Horizontal w/ slugHash%8 == 0 (~12%):   2 cols × 2 rows (big square)
   //   - Other horizontal:                       1 col × 1 row   (small square)
   // Hash is deterministic on slug so the same video always gets the same shape.
   // grid-auto-flow: dense (set on the container) packs the mix efficiently.
   const cells = posts
     .map((post) => {
       const isVertical = post.dimensions && post.dimensions.h > post.dimensions.w;
-      const isBig = !isVertical && (slugHash(post.slug) % 4 === 0);
+      const isBig = !isVertical && (slugHash(post.slug) % 8 === 0);
       let spanStyle = "";
       if (isVertical) spanStyle = ' style="grid-row: span 2"';
       else if (isBig) spanStyle = ' style="grid-column: span 2; grid-row: span 2"';
