@@ -51,10 +51,27 @@ async function walkVideos(dir, base = dir) {
   for (const entry of entries) {
     if (IGNORE_NAMES.has(entry.name) || entry.name.startsWith(".")) continue;
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
+
+    // readdir with withFileTypes returns Dirents whose .isDirectory()/.isFile()
+    // refer to the link itself for symlinks — so a symlink to a folder reports
+    // isDirectory()=false. Follow symlinks via stat() so users can drop a link
+    // to e.g. an external drive into the content folder and have it scanned.
+    let isDir = entry.isDirectory();
+    let isFile = entry.isFile();
+    if (entry.isSymbolicLink()) {
+      try {
+        const t = await stat(full);
+        isDir = t.isDirectory();
+        isFile = t.isFile();
+      } catch {
+        continue; // dangling symlink — skip silently
+      }
+    }
+
+    if (isDir) {
       const nested = await walkVideos(full, base);
       out.push(...nested);
-    } else if (VIDEO_EXTS.has(extname(entry.name).toLowerCase())) {
+    } else if (isFile && VIDEO_EXTS.has(extname(entry.name).toLowerCase())) {
       const rel = relative(base, full).split(sep).join("/"); // posix for URLs
       const parentRel = dirname(rel) === "." ? "" : dirname(rel);
       const s = await stat(full);
