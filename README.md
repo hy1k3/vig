@@ -2,32 +2,40 @@
 
 Personal video gallery. Point it at a folder of videos, get a browseable site with TikTok-style previews, deep-linkable shots, watch heatmaps, and an in-place clip-marking player.
 
-## Install
-
-One-time, somewhere on your `$PATH`:
-
-```sh
-curl -o ~/bin/vig https://raw.githubusercontent.com/hy1k3/vig/main/install.sh
-chmod +x ~/bin/vig
-```
-
 ## Use
 
 ```sh
 cd ~/Movies
-vig
-# vig: cloning https://github.com/hy1k3/vig.git into ~/Movies/.vig/src   (first time only)
-# vig: building…
-# vig: serving ~/Movies
-#      http://localhost:53412
+curl https://raw.githubusercontent.com/hy1k3/vig/main/vig.sh | sh
 ```
 
-Open the URL in your browser. Stop with Ctrl+C.
+That's it. First run clones vig into `.vig/src/`, builds the gallery into `.vig/site/`, picks a free port, and serves it:
 
-Going forward you can either:
+```
+vig: cloning https://github.com/hy1k3/vig.git into ~/Movies/.vig/src
+vig: building…
+vig: serving ~/Movies
+     http://localhost:53412
+```
 
-- `vig` (the global script — auto-updates the local clone), or
-- `~/Movies/.vig/vig.sh` (the local launcher dropped on first run — doesn't update; useful if you don't want to be surprised by changes).
+Open the URL. Stop with Ctrl+C.
+
+**Subsequent runs in the same folder:**
+
+```sh
+.vig/vig.sh
+```
+
+The local launcher is dropped on first run — it doesn't auto-update, just runs whatever's in `.vig/src/`. Useful when you don't want to be surprised by new versions.
+
+**Re-run the bootstrap** (auto-update + run) any time with the same `curl … | sh` line. If you do it often, save the script:
+
+```sh
+curl -o ~/vig.sh https://raw.githubusercontent.com/hy1k3/vig/main/vig.sh
+chmod +x ~/vig.sh
+# then anywhere:
+cd ~/some-folder && ~/vig.sh
+```
 
 ## What gets created
 
@@ -36,22 +44,22 @@ Going forward you can either:
 ├── film1.mp4
 ├── film2.mp4
 └── .vig/
-    ├── src/        # cloned vig source (rebuildable: rm and re-run vig)
-    ├── site/       # generated build output: html, css, posters, clips
-    ├── meta/       # persistent user data: shots.json, heat.json per video
-    └── vig.sh      # local launcher, see above
+    ├── src/        # cloned vig source
+    ├── site/       # generated build output (safe to wipe — full rebuild)
+    ├── meta/       # persistent shots/heat sidecars (NOT wiped)
+    └── vig.sh      # local launcher (no auto-update)
 ```
 
-The source folder itself is never modified — vig only ever reads from it.
+Your source folder is never modified — vig only reads from it.
 
 ## Update vig
 
 ```sh
-rm -rf ~/Movies/.vig/src     # forces re-clone of latest on next run
-vig
+rm -rf ~/Movies/.vig/src     # next launch re-clones latest
+.vig/vig.sh
 ```
 
-Or just run `vig` (not `.vig/vig.sh`) — the global script does `git pull` automatically.
+Or just re-run `curl … | sh` — the bootstrap does `git pull` on existing clones.
 
 ## Develop
 
@@ -70,14 +78,14 @@ Override paths with env vars:
 | `VIG_SITE`        | `_site`                           | build output (html, posters, clips)                   |
 | `VIG_META`        | `<VIG_SITE>/meta`                 | persistent shots/heat sidecars                        |
 | `VIG_PLAYER_SRC`  | `<vig-install>/vig-player.js`     | path to the `<vig-player>` web component              |
-| `VIG_PORT`        | `3001` (cli picks a free port)    | server port                                           |
+| `VIG_PORT`        | random free port (cli)            | server port                                           |
 | `VIG_DEBUG`       | unset                             | log every ffmpeg call when `=1`                       |
 
 ## Requirements
 
-- Node 20 or newer (uses `fs.watch` recursive on Linux)
+- Node 20 or newer
 - `ffmpeg` and `ffprobe` on `$PATH` (`brew install ffmpeg`)
-- `git` (for the bootstrap script)
+- `git` (for the bootstrap)
 
 ## License
 

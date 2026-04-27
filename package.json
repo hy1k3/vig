@@ -19,7 +19,7 @@
     "build.js",
     "serve.js",
     "vig-player.js",
-    "install.sh",
+    "vig.sh",
     "README.md"
   ],
   "engines": {
