@@ -1,0 +1,30 @@
+{
+  "name": "vig",
+  "version": "0.1.0",
+  "description": "Personal video gallery — point it at a folder of videos and get a browseable site with TikTok-style previews, deep-linkable shots, and a watch heatmap.",
+  "type": "module",
+  "bin": {
+    "vig": "./cli.js"
+  },
+  "scripts": {
+    "start": "node cli.js",
+    "build": "node build.js",
+    "build:debug": "VIG_DEBUG=1 node build.js",
+    "serve": "node serve.js",
+    "dev": "node build.js && node serve.js",
+    "dev:debug": "VIG_DEBUG=1 node build.js && VIG_DEBUG=1 node serve.js"
+  },
+  "files": [
+    "cli.js",
+    "build.js",
+    "serve.js",
+    "vig-player.js",
+    "install.sh",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": "github:hy1k3/vig",
+  "license": "MIT"
+}
