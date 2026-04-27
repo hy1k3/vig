@@ -165,6 +165,15 @@ function previewCums(plan) {
   return out;
 }
 
+// Deterministic hash from a slug — same input always yields the same number,
+// so layout decisions (e.g. which horizontal gets a big 2x2 tile) don't shift
+// between rebuilds. djb2-style; modulo a small N gives stable bucketing.
+function slugHash(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
 // ─── ffmpeg: poster frame extraction ─────────────────────────────────────────
 
 function spawnCapture(cmd, args) {
@@ -1091,15 +1100,20 @@ function detailPage(post) {
 // ─── Template: Gallery Grid ──────────────────────────────────────────────────
 
 function galleryGrid(posts) {
-  // Cell sizing on a uniform column-width:
-  //   - Horizontal (w ≥ h): 1 col × 1 row (square, cropped to fit)
-  //   - Vertical   (h > w): 1 col × 2 rows (1:2 portrait, fits 9:16 cleanly)
-  // Same column width for every cell, only verticals go double-tall — keeps the
-  // grid rhythm tight without huge 2-col-wide landscape cells.
+  // Three cell sizes for visual rhythm in a max-3-col grid:
+  //   - Vertical (h > w):                       1 col × 2 rows  (portrait)
+  //   - Horizontal w/ slugHash%4 == 0 (~25%):   2 cols × 2 rows (big square)
+  //   - Other horizontal:                       1 col × 1 row   (small square)
+  // Hash is deterministic on slug so the same video always gets the same shape.
+  // grid-auto-flow: dense (set on the container) packs the mix efficiently.
   const cells = posts
     .map((post) => {
       const isVertical = post.dimensions && post.dimensions.h > post.dimensions.w;
-      const spanStyle = isVertical ? ' style="grid-row: span 2"' : "";
+      const isBig = !isVertical && (slugHash(post.slug) % 4 === 0);
+      let spanStyle = "";
+      if (isVertical) spanStyle = ' style="grid-row: span 2"';
+      else if (isBig) spanStyle = ' style="grid-column: span 2; grid-row: span 2"';
+
       const starts = post.previewPlan ? post.previewPlan.ranges.map((r) => r.start) : [];
       const cums = previewCums(post.previewPlan);
       const thumb = post.hasThumb
@@ -1424,14 +1438,9 @@ const CSS = `/* vig — Video Gallery Styles (mirrors mig's dark IG-style theme)
   --bottom-h: 50px;
 }
 
-/* Grid column count scales with viewport. Horizontals span 2 cells, so with
-   only 2 cols every H covers a whole row → stack-feel for landscape-heavy
-   collections. More cols = mixed-content layouts breathe. */
-@media (min-width: 720px)  { :root { --grid-cols: 3; } }
-@media (min-width: 1100px) { :root { --grid-cols: 4; } }
-@media (min-width: 1500px) { :root { --grid-cols: 5; } }
-@media (min-width: 1900px) { :root { --grid-cols: 6; } }
-@media (min-width: 2400px) { :root { --grid-cols: 7; } }
+/* Grid column count: max 3 wide. Cells get bigger on wider viewports rather
+   than more numerous — gives a less dense, more curated feel. */
+@media (min-width: 720px) { :root { --grid-cols: 3; } }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
