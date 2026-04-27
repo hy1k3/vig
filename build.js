@@ -1723,20 +1723,29 @@ img, video { display: block; width: 100%; height: auto; }
 }
 .gallery-grid {
   --grid-gap: 2px;
-  --grid-edge: 0px;   /* edge-to-edge by default; bump if you want a margin */
+  --grid-edge: 0px;
+  /* Cap kicks in on desktop only — below this the grid fills the viewport
+     edge-to-edge (iPad portrait, iPad landscape both look great full-width).
+     Above, we cap and centre so cells don't grow absurdly large. */
+  --grid-cap: 100vw;
   display: grid;
   grid-template-columns: repeat(var(--grid-cols), 1fr);
-  /* Row height = column width. Subtract a small fudge so an OS scrollbar
-     doesn't push the grid into a horizontal scroll. */
+  /* Row height = column width. Subtract a 17px fudge for the scrollbar so the
+     grid never overflows horizontally. min() lets the formula adapt to either
+     the viewport (mobile) or the cap (desktop). */
   grid-auto-rows: calc(
-    (100vw - 17px - 2 * var(--grid-edge) - (var(--grid-cols) - 1) * var(--grid-gap))
+    (min(100vw, var(--grid-cap)) - 17px - 2 * var(--grid-edge) - (var(--grid-cols) - 1) * var(--grid-gap))
     / var(--grid-cols)
   );
   grid-auto-flow: dense;
   gap: var(--grid-gap);
   width: 100%;
-  margin: 0;
+  max-width: var(--grid-cap);
+  margin: 0 auto;
   padding: 0 var(--grid-edge);
+}
+@media (min-width: 1100px) {
+  .gallery-grid { --grid-cap: 1100px; }
 }
 .grid-cell {
   position: relative;
