@@ -1091,20 +1091,22 @@ function detailPage(post) {
 // ─── Template: Gallery Grid ──────────────────────────────────────────────────
 
 function galleryGrid(posts) {
-  // Two-tier layout: horizontal videos take a single square cell, verticals
-  // take two stacked squares (a 1×2 portrait cell). Grid rows align cleanly
-  // because every cell is an integer multiple of one column-width.
+  // Aspect-symmetric layout on a square base cell:
+  //   - Vertical (h > w):  1 col × 2 rows  → 1:2 portrait, fits 9:16 cleanly
+  //   - Horizontal (w ≥ h): 2 cols × 1 row → 2:1 landscape, fits 16:9 cleanly
+  // Rows always align across columns because both shapes are integer multiples
+  // of one column-width.
   const cells = posts
     .map((post) => {
       const isVertical = post.dimensions && post.dimensions.h > post.dimensions.w;
-      const span = isVertical ? 2 : 1;
+      const spanStyle = isVertical ? "grid-row: span 2" : "grid-column: span 2";
       const starts = post.previewPlan ? post.previewPlan.ranges.map((r) => r.start) : [];
       const cums = previewCums(post.previewPlan);
       const thumb = post.hasThumb
         ? hotShots(`post/${post.slug}`, post.title, "grid", post.previewCount || 1, starts, cums)
         : `<div class="grid-placeholder">${escapeHtml(folderInitial(post.folder))}</div>`;
       return `
-      <a href="post/${post.slug}/index.html" class="grid-cell" style="grid-row-end: span ${span}">
+      <a href="post/${post.slug}/index.html" class="grid-cell" style="${spanStyle}">
         ${thumb}
         <div class="grid-overlay">
           <span class="grid-stat">${escapeHtml(post.title)}</span>
@@ -1693,28 +1695,44 @@ img, video { display: block; width: 100%; height: auto; }
   border-bottom-color: var(--text);
 }
 
-/* ─── Gallery Grid (auto-fill, square base, 1×1 or 1×2 cells) ────── */
-/* Columns auto-fill the container with cells ≥220px wide. Row height comes
-   from each cell's aspect-ratio: square for horizontals, 1:2 for verticals
-   (which also span 2 rows). Rows therefore align cleanly without explicit
-   media queries — cell count adapts to whatever width .feed has. */
+/* ─── Gallery Grid (aspect-symmetric, with breathing room) ──────────── */
+/* Square base cell. Vertical → 1×2, horizontal → 2×1 — both natural shapes.
+   Generous gaps + padding + soft shadows + hover-lift give a more curated
+   feel than a tight mobile-cramped grid. */
 .gallery-grid {
+  --grid-cols: 2;
+  --grid-gap: 8px;
+  --grid-pad: 12px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 2px;
+  grid-template-columns: repeat(var(--grid-cols), 1fr);
+  /* Row height = column width, computed from the actual usable width
+     (frame width − padding − gap) so 1×2 cells are precisely 1:2. */
+  grid-auto-rows: calc(
+    (min(100vw, var(--max-w)) - 2 * var(--grid-pad) - (var(--grid-cols) - 1) * var(--grid-gap))
+    / var(--grid-cols)
+  );
+  gap: var(--grid-gap);
   width: 100%;
-  padding-bottom: calc(var(--bottom-h) + 20px);
-}
-.grid-cell {
-  aspect-ratio: 1;
-}
-.grid-cell[style*="span 2"] {
-  aspect-ratio: 1 / 2;
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: var(--grid-pad) var(--grid-pad) calc(var(--bottom-h) + 24px);
 }
 .grid-cell {
   position: relative;
   background: var(--bg-elevated);
   overflow: hidden;
+  border-radius: 8px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.grid-cell:hover {
+  transform: translateY(-2px) scale(1.015);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.5),
+    0 12px 32px rgba(0, 0, 0, 0.4);
+  z-index: 2;
 }
 .grid-cell .grid-placeholder {
   width: 100%;
@@ -1733,22 +1751,27 @@ img, video { display: block; width: 100%; height: auto; }
   right: 8px;
   filter: drop-shadow(0 1px 3px rgba(0,0,0,0.5));
 }
+/* Always-visible title hint — strengthens on hover. The bottom gradient
+   gives the cells a Netflix-card feel: identifiable at a glance without
+   mousing over. */
 .grid-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 50%);
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0) 55%);
   display: flex;
   align-items: flex-end;
-  padding: 8px;
-  opacity: 0;
-  transition: opacity 0.15s;
+  padding: 10px 12px;
+  pointer-events: none;
+  opacity: 0.75;
+  transition: opacity 0.18s ease;
 }
 .grid-cell:hover .grid-overlay { opacity: 1; }
 .grid-stat {
-  color: white;
-  font-weight: 600;
-  font-size: 11px;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.1px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

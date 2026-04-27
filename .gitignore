@@ -3,3 +3,6 @@ _site/
 node_modules/
 .DS_Store
 *.log
+# Ignore symlinks/folders the dev might drop in for local testing.
+dwhelper
+videos
