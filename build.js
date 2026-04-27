@@ -1420,13 +1420,18 @@ const CSS = `/* vig — Video Gallery Styles (mirrors mig's dark IG-style theme)
      bottom nav, feed) stays in the 470px mobile-app frame for a focused look,
      while the grid breaks out to a cinematic content area on bigger viewports. */
   --grid-max-w: 470px;
+  --grid-cols: 2;
   --nav-h: 54px;
   --bottom-h: 50px;
 }
 
-@media (min-width: 720px)  { :root { --grid-max-w: 720px;  } }
-@media (min-width: 1100px) { :root { --grid-max-w: 1100px; } }
-@media (min-width: 1500px) { :root { --grid-max-w: 1500px; } }
+/* Grid scales width AND column count with viewport. Column count matters
+   because horizontals span 2 cells: with only 2 cols the H always covers
+   the whole row, collapsing the grid into a stack for landscape-heavy
+   collections. More cols = mixed-content layouts breathe properly. */
+@media (min-width: 720px)  { :root { --grid-max-w: 720px;  --grid-cols: 3; } }
+@media (min-width: 1100px) { :root { --grid-max-w: 1100px; --grid-cols: 4; } }
+@media (min-width: 1500px) { :root { --grid-max-w: 1500px; --grid-cols: 5; } }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -1703,7 +1708,6 @@ img, video { display: block; width: 100%; height: auto; }
    to its own --grid-max-w on bigger viewports for that "premium content"
    feel — minimalist frame around a wide content canvas. */
 .gallery-grid {
-  --grid-cols: 2;
   --grid-gap: 2px;
   display: grid;
   grid-template-columns: repeat(var(--grid-cols), 1fr);
@@ -1711,6 +1715,9 @@ img, video { display: block; width: 100%; height: auto; }
     (min(100vw, var(--grid-max-w)) - (var(--grid-cols) - 1) * var(--grid-gap))
     / var(--grid-cols)
   );
+  /* dense packing — backfills the holes left by 2-col-wide horizontals so
+     the grid is dense even when content is e.g. mostly landscape. */
+  grid-auto-flow: dense;
   gap: var(--grid-gap);
   width: 100%;
   max-width: var(--grid-max-w);
