@@ -8,7 +8,7 @@
 
 import { readdir, readFile, writeFile, mkdir, copyFile, symlink, link, lstat, rm, stat } from "fs/promises";
 import { join, extname, basename, dirname, relative, resolve, sep, posix } from "path";
-import { existsSync } from "fs";
+import { existsSync, createReadStream } from "fs";
 import { spawn } from "child_process";
 import { createHash } from "crypto";
 import { fileURLToPath } from "url";
@@ -172,6 +172,20 @@ function slugHash(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) | 0;
   return Math.abs(h);
+}
+
+// SHA-1 of a file's content, hex-truncated to 16 chars (64 bits — plenty for
+// cache validation). Used as a fallback when the mtime fast-path says "stale"
+// but the content might actually be unchanged (Spotlight reindexing, Time
+// Machine restore, Drive sync, etc. all touch mtimes without changing bytes).
+function hashFile(path) {
+  return new Promise((resolve, reject) => {
+    const h = createHash("sha1");
+    const s = createReadStream(path);
+    s.on("data", (chunk) => h.update(chunk));
+    s.on("end", () => resolve(h.digest("hex").slice(0, 16)));
+    s.on("error", reject);
+  });
 }
 
 // ─── ffmpeg: poster frame extraction ─────────────────────────────────────────
@@ -596,8 +610,8 @@ async function generateThumbs(posts) {
   const tierCounts = {};
 
   // Phase 1: gather state for all posts in parallel. Pure I/O — read each
-  // post's .build-meta.json, decide if it's cached. ffprobe is only called
-  // when there's no cached metadata, and even then it stays parallel-safe.
+  // post's .build-meta.json, decide if it's cached. ffprobe and hash are only
+  // called when needed (cache miss / mtime mismatch).
   const states = await Promise.all(posts.map(async (post) => {
     const srcPath = join(CONTENT_DIR, post.relPath);
     const destDir = post.outDir;
@@ -606,10 +620,25 @@ async function generateThumbs(posts) {
     const heatMs = post.heatMtime || 0;
 
     const buildMeta = await readBuildMeta(destDir);
+    const mtimeMatches = !!(buildMeta && buildMeta.srcMtime === srcMs);
 
-    // Use cached metadata when valid for this source file (skips ffprobe).
+    // mtime-touch fallback: if mtime moved but a hash is on file, verify
+    // content. If hash matches, refresh mtime and treat as fresh.
+    let hashRefresh = null; // { hash } if we want to update buildMeta with this
+    let contentUnchanged = mtimeMatches;
+    if (!mtimeMatches && buildMeta?.srcHash) {
+      try {
+        const currentHash = await hashFile(srcPath);
+        if (currentHash === buildMeta.srcHash) {
+          contentUnchanged = true;
+          hashRefresh = { hash: currentHash };
+        }
+      } catch { /* hash failed — treat as stale */ }
+    }
+
+    // Use cached metadata when source content is unchanged.
     let meta = null;
-    if (buildMeta && buildMeta.srcMtime === srcMs && buildMeta.metadata) {
+    if (contentUnchanged && buildMeta?.metadata) {
       meta = buildMeta.metadata;
     }
 
@@ -623,7 +652,6 @@ async function generateThumbs(posts) {
 
       const metaMatches = buildMeta
         && buildMeta.pipelineHash === pipelineHash
-        && buildMeta.srcMtime === srcMs
         && buildMeta.sidecarMtime === sidecarMs
         && buildMeta.heatMtime === heatMs
         && buildMeta.frameCount === plan.ranges.length;
@@ -636,12 +664,14 @@ async function generateThumbs(posts) {
       }
     }
 
-    return { post, srcPath, destDir, srcMs, sidecarMs, heatMs, meta, plan, expectedFiles, fresh };
+    return { post, srcPath, destDir, srcMs, sidecarMs, heatMs, meta, plan, expectedFiles, fresh, buildMeta, hashRefresh };
   }));
 
   // Phase 2: handle the cached posts in parallel (just file housekeeping —
   // restore previewPlan onto the post so templates have it, and tidy any
-  // stale stragglers in their dirs).
+  // stale stragglers in their dirs). If we verified content via hash because
+  // mtime moved, also write back a refreshed manifest so the next build can
+  // use the fast mtime path again.
   await Promise.all(states.filter((s) => s.fresh).map(async (s) => {
     s.post.hasThumb = true;
     s.post.previewCount = s.plan.ranges.length;
@@ -650,6 +680,13 @@ async function generateThumbs(posts) {
     skipped++;
     tierCounts[s.post.qualityTier] = (tierCounts[s.post.qualityTier] || 0) + 1;
     await cleanupStaleFiles(s.destDir, s.expectedFiles);
+    if (s.hashRefresh) {
+      await writeBuildMeta(s.destDir, {
+        ...s.buildMeta,
+        srcMtime: s.srcMs,
+        srcHash: s.hashRefresh.hash,
+      });
+    }
   }));
 
   // Phase 3: stale posts — sequential because ffmpeg has trouble with
@@ -667,7 +704,13 @@ async function generateThumbs(posts) {
     tierCounts[s.post.qualityTier] = (tierCounts[s.post.qualityTier] || 0) + 1;
 
     await cleanupStaleFiles(s.destDir, s.expectedFiles);
-    const success = await extractPreviews(s.post, s.srcPath, s.destDir, s.meta);
+    // Hash in parallel with the encode — both read the source file, OS handles
+    // the concurrency fine, and the hash usually finishes first so it doesn't
+    // add wall-clock time to the build.
+    const [success, srcHash] = await Promise.all([
+      extractPreviews(s.post, s.srcPath, s.destDir, s.meta),
+      hashFile(s.srcPath).catch(() => null),
+    ]);
     if (success) {
       s.post.hasThumb = true;
       generated++;
@@ -675,6 +718,7 @@ async function generateThumbs(posts) {
       await writeBuildMeta(s.destDir, {
         pipelineHash,
         srcMtime: s.srcMs,
+        srcHash,
         sidecarMtime: s.sidecarMs,
         heatMtime: s.heatMs,
         frameCount: s.plan.ranges.length,
