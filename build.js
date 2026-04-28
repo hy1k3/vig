@@ -595,70 +595,95 @@ async function generateThumbs(posts) {
   let generated = 0, skipped = 0, failed = 0, fromShots = 0;
   const tierCounts = {};
 
-  for (const post of posts) {
+  // Phase 1: gather state for all posts in parallel. Pure I/O — read each
+  // post's .build-meta.json, decide if it's cached. ffprobe is only called
+  // when there's no cached metadata, and even then it stays parallel-safe.
+  const states = await Promise.all(posts.map(async (post) => {
     const srcPath = join(CONTENT_DIR, post.relPath);
     const destDir = post.outDir;
-
-    // One probe gives us duration (for the plan), dimensions (for the layout),
-    // and bitrate/fps (for the encoder tier picked downstream).
-    const meta = await getMetadata(srcPath);
-    post.dimensions = meta && meta.width && meta.height ? { w: meta.width, h: meta.height } : null;
-    post.qualityTier = qualityTier(meta);
-    tierCounts[post.qualityTier] = (tierCounts[post.qualityTier] || 0) + 1;
-
-    const plan = previewPlan(post, meta?.duration);
-    const expectedFiles = expectedPreviewFiles(plan);
-
     const srcMs = new Date(post.mtime).getTime();
     const sidecarMs = post.sidecarMtime || 0;
     const heatMs = post.heatMtime || 0;
 
-    // Check the manifest first: source/sidecar/heat mtimes AND the pipeline
-    // hash must all match the recorded values, otherwise we re-encode.
     const buildMeta = await readBuildMeta(destDir);
-    const metaMatches = buildMeta
-      && buildMeta.pipelineHash === pipelineHash
-      && buildMeta.srcMtime === srcMs
-      && buildMeta.sidecarMtime === sidecarMs
-      && buildMeta.heatMtime === heatMs
-      && buildMeta.frameCount === plan.ranges.length;
 
-    let fresh = metaMatches;
-    if (fresh) {
-      // Also verify the actual files are still on disk.
-      for (const name of expectedFiles) {
-        if (!existsSync(join(destDir, name))) { fresh = false; break; }
+    // Use cached metadata when valid for this source file (skips ffprobe).
+    let meta = null;
+    if (buildMeta && buildMeta.srcMtime === srcMs && buildMeta.metadata) {
+      meta = buildMeta.metadata;
+    }
+
+    let plan = null, expectedFiles = null, fresh = false;
+    if (meta) {
+      post.dimensions = meta.width && meta.height ? { w: meta.width, h: meta.height } : null;
+      post.qualityTier = qualityTier(meta);
+
+      plan = previewPlan(post, meta.duration);
+      expectedFiles = expectedPreviewFiles(plan);
+
+      const metaMatches = buildMeta
+        && buildMeta.pipelineHash === pipelineHash
+        && buildMeta.srcMtime === srcMs
+        && buildMeta.sidecarMtime === sidecarMs
+        && buildMeta.heatMtime === heatMs
+        && buildMeta.frameCount === plan.ranges.length;
+
+      fresh = metaMatches;
+      if (fresh) {
+        for (const name of expectedFiles) {
+          if (!existsSync(join(destDir, name))) { fresh = false; break; }
+        }
       }
     }
 
-    if (fresh) {
-      post.hasThumb = true;
-      post.previewCount = plan.ranges.length;
-      post.previewPlan = plan;                         // needed by the template for start timestamps
-      if (post.shots.length > 0) fromShots++;
-      skipped++;
-      await cleanupStaleFiles(destDir, expectedFiles); // tidy stragglers
-      continue;
+    return { post, srcPath, destDir, srcMs, sidecarMs, heatMs, meta, plan, expectedFiles, fresh };
+  }));
+
+  // Phase 2: handle the cached posts in parallel (just file housekeeping —
+  // restore previewPlan onto the post so templates have it, and tidy any
+  // stale stragglers in their dirs).
+  await Promise.all(states.filter((s) => s.fresh).map(async (s) => {
+    s.post.hasThumb = true;
+    s.post.previewCount = s.plan.ranges.length;
+    s.post.previewPlan = s.plan;
+    if (s.post.shots.length > 0) fromShots++;
+    skipped++;
+    tierCounts[s.post.qualityTier] = (tierCounts[s.post.qualityTier] || 0) + 1;
+    await cleanupStaleFiles(s.destDir, s.expectedFiles);
+  }));
+
+  // Phase 3: stale posts — sequential because ffmpeg has trouble with
+  // multiple concurrent encodes against the same source filesystem.
+  for (const s of states.filter((s) => !s.fresh)) {
+    // No cached metadata? Probe now (this is the first time we see this video).
+    if (!s.meta) {
+      s.meta = await getMetadata(s.srcPath);
+      s.post.dimensions = s.meta && s.meta.width && s.meta.height
+        ? { w: s.meta.width, h: s.meta.height } : null;
+      s.post.qualityTier = qualityTier(s.meta);
+      s.plan = previewPlan(s.post, s.meta?.duration);
+      s.expectedFiles = expectedPreviewFiles(s.plan);
     }
+    tierCounts[s.post.qualityTier] = (tierCounts[s.post.qualityTier] || 0) + 1;
 
-    await cleanupStaleFiles(destDir, expectedFiles);
-
-    const success = await extractPreviews(post, srcPath, destDir, meta);
+    await cleanupStaleFiles(s.destDir, s.expectedFiles);
+    const success = await extractPreviews(s.post, s.srcPath, s.destDir, s.meta);
     if (success) {
-      post.hasThumb = true;
+      s.post.hasThumb = true;
       generated++;
-      if (post.shots.length > 0) fromShots++;
-      await writeBuildMeta(destDir, {
+      if (s.post.shots.length > 0) fromShots++;
+      await writeBuildMeta(s.destDir, {
         pipelineHash,
-        srcMtime: srcMs,
-        sidecarMtime: sidecarMs,
-        heatMtime: heatMs,
-        frameCount: plan.ranges.length,
-        qualityTier: post.qualityTier,
+        srcMtime: s.srcMs,
+        sidecarMtime: s.sidecarMs,
+        heatMtime: s.heatMs,
+        frameCount: s.plan.ranges.length,
+        qualityTier: s.post.qualityTier,
+        metadata: s.meta,
       });
     } else {
       failed++;
-      console.warn(`  previews failed: ${post.relPath}`);
+      console.warn(`  previews failed: ${s.post.relPath}`);
     }
   }
 
@@ -1227,18 +1252,19 @@ async function build() {
     seenSlugs.set(p.slug, count + 1);
   }
 
-  // Load sidecars per post — they live in _site/meta/<slug>/ so a wipe of the
-  // post/ tree (full rebuild) doesn't lose the user's shots and heat data.
-  for (const post of posts) {
+  // Load sidecars per post in parallel — pure I/O, sequential just adds latency.
+  // They live in _site/meta/<slug>/ so a wipe of the post/ tree (full rebuild)
+  // doesn't lose the user's shots and heat data.
+  await Promise.all(posts.map(async (post) => {
     const shotsPath = join(post.metaDir, "shots.json");
     if (existsSync(shotsPath)) {
       try {
-        const parsed = JSON.parse(await readFile(shotsPath, "utf-8"));
+        const [raw, sst] = await Promise.all([readFile(shotsPath, "utf-8"), stat(shotsPath)]);
+        const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           post.shots = parsed.filter((s) =>
             typeof s?.start === "number" && typeof s?.end === "number" && s.end > s.start);
         }
-        const sst = await stat(shotsPath);
         post.sidecarMtime = sst.mtime.getTime();
       } catch (err) {
         console.warn(`  skipping malformed shots ${shotsPath}: ${err.message}`);
@@ -1247,17 +1273,17 @@ async function build() {
     const heatPath = join(post.metaDir, "heat.json");
     if (existsSync(heatPath)) {
       try {
-        const parsed = JSON.parse(await readFile(heatPath, "utf-8"));
+        const [raw, hst] = await Promise.all([readFile(heatPath, "utf-8"), stat(heatPath)]);
+        const parsed = JSON.parse(raw);
         if (parsed && Array.isArray(parsed.buckets) && typeof parsed.bucketSize === "number") {
           post.heat = parsed;
-          const hst = await stat(heatPath);
           post.heatMtime = hst.mtime.getTime();
         }
       } catch (err) {
         console.warn(`  skipping malformed heat ${heatPath}: ${err.message}`);
       }
     }
-  }
+  }));
 
   // Sort newest first
   posts.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
@@ -1287,37 +1313,36 @@ async function build() {
   //    Hardlinks share inodes with the source — zero disk duplication, builds
   //    are instant, and the files look like regular files to the static server
   //    (unlike symlinks, which serve refuses when they point outside the root).
-  let linked = 0, skipped = 0, fallbackCopied = 0;
-  for (const post of posts) {
+  //    Done in parallel: pure I/O, no reason to serialise.
+  const linkResults = await Promise.all(posts.map(async (post) => {
     const srcPath = join(CONTENT_DIR, post.relPath);
-    if (!existsSync(srcPath)) continue;
+    if (!existsSync(srcPath)) return "missing";
     await mkdir(post.outDir, { recursive: true });
     const destPath = join(post.outDir, post.videoFile);
 
-    // If the destination is already a hardlink to the same inode, nothing to do.
     try {
       const [destStat, srcStat] = await Promise.all([lstat(destPath), stat(srcPath)]);
-      if (!destStat.isSymbolicLink() && destStat.ino === srcStat.ino) {
-        skipped++;
-        continue;
-      }
+      if (!destStat.isSymbolicLink() && destStat.ino === srcStat.ino) return "skipped";
       await rm(destPath, { force: true });
     } catch { /* doesn't exist — fine */ }
 
     try {
       await link(srcPath, destPath);
-      linked++;
-    } catch (err) {
+      return "linked";
+    } catch {
       // Hardlinks can't cross filesystems (EXDEV) or may be unsupported — fall back to copy.
       await copyFile(srcPath, destPath);
-      fallbackCopied++;
+      return "copied";
     }
-  }
+  }));
   if (posts.length > 0) {
+    const counts = { linked: 0, skipped: 0, copied: 0, missing: 0 };
+    for (const r of linkResults) counts[r] = (counts[r] || 0) + 1;
     const parts = [];
-    if (linked) parts.push(`${linked} linked`);
-    if (skipped) parts.push(`${skipped} up-to-date`);
-    if (fallbackCopied) parts.push(`${fallbackCopied} copied (no symlink support)`);
+    if (counts.linked)  parts.push(`${counts.linked} linked`);
+    if (counts.skipped) parts.push(`${counts.skipped} up-to-date`);
+    if (counts.copied)  parts.push(`${counts.copied} copied (no symlink support)`);
+    if (counts.missing) parts.push(`${counts.missing} missing source`);
     console.log(`  media: ${parts.join(", ")}`);
   }
 
@@ -1328,9 +1353,10 @@ async function build() {
   }
 
   // 5b. Write per-post meta.json — keeps each post folder self-contained even
-  //     if you copy/move/share it without the source.
-  for (const post of posts) {
-    const meta = {
+  //     if you copy/move/share it without the source. Parallel: pure I/O.
+  await Promise.all(posts.map((post) => writeFile(
+    join(post.outDir, "meta.json"),
+    JSON.stringify({
       slug: post.slug,
       originalName: post.filename,
       relPath: post.relPath,
@@ -1339,9 +1365,8 @@ async function build() {
       videoFile: post.videoFile,
       size: post.size,
       mtime: post.mtime,
-    };
-    await writeFile(join(post.outDir, "meta.json"), JSON.stringify(meta, null, 2));
-  }
+    }, null, 2),
+  )));
 
   // 6. Link the vig-player web component into _site/ so detail pages can load
   //    it as a same-origin module (file:// + cross-dir module loading is fragile,
@@ -1379,11 +1404,11 @@ async function build() {
   await writeFile(join(OUT_DIR, "index.html"), feedPage(posts));
   console.log("  wrote index.html");
 
-  // 9. Write detail pages — each into its own post folder.
-  for (const post of posts) {
+  // 9. Write detail pages — each into its own post folder. Parallel: pure I/O.
+  await Promise.all(posts.map(async (post) => {
     await mkdir(post.outDir, { recursive: true });
     await writeFile(join(post.outDir, "index.html"), detailPage(post));
-  }
+  }));
   if (posts.length > 0) {
     console.log(`  wrote ${posts.length} detail page${posts.length === 1 ? "" : "s"}`);
   }
