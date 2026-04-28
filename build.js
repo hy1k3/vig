@@ -843,6 +843,7 @@ function videoPlayerScript() {
       var link = el.closest('a');
       var linkBase = link ? link.getAttribute('href') : null;
       var active = false;
+      var previewUrl = base + '/preview.mp4';
 
       function clipIndexAt(t) {
         for (var i = cums.length - 1; i >= 0; i--) {
@@ -862,13 +863,15 @@ function videoPlayerScript() {
       }
 
       video.addEventListener('timeupdate', syncHref);
-      // Initial href points at the first shot — a click before play still jumps right.
       syncHref();
 
       return {
         start: function() {
           if (active) return;
           active = true;
+          // Attach src on demand. preload="none" + a missing src means no
+          // decoder/buffer is held until we actively play this card.
+          if (!video.getAttribute('src')) video.src = previewUrl;
           var p = video.play();
           if (p && p.catch) p.catch(function(){});
         },
@@ -876,7 +879,11 @@ function videoPlayerScript() {
           if (!active) return;
           active = false;
           video.pause();
-          video.currentTime = 0;
+          // Free the decoder + any buffered video. Without this, scrolling
+          // a 127-card gallery accumulates ~5-10MB per card in held state
+          // and Safari reloads the tab when it crosses ~1GB.
+          video.removeAttribute('src');
+          video.load();
           syncHref();
         },
       };
@@ -1073,14 +1080,14 @@ function feedCard(post, index) {
 // the current start onto the wrapping <a href> as ?t=<seconds> so clicking
 // jumps to that moment on the detail page.
 function hotShots(baseUrl, title, variant, count, starts = [], cums = []) {
-  const previewSrc = `${baseUrl}/preview.mp4`;
   const poster = `${baseUrl}/poster.jpg`;
   const startsAttr = starts.map((s) => s.toFixed(2)).join(",");
   const cumsAttr = cums.map((s) => s.toFixed(2)).join(",");
-  // Card shape is driven by CSS (variant class) + grid-row span (for grid),
-  // not inline aspect — so horizontals crop into the feed's tall shape and
-  // grid cells stay aligned. The video is one stitched preview.mp4 that loops
-  // natively (no src swap = no black flash between clips).
+  // The video element starts WITHOUT a src — only the poster is shown.
+  // setupClipCycle attaches the src on viewport entry and clears it again
+  // on exit (via removeAttribute + load()) to free the decoder context.
+  // Keeps memory bounded for big galleries — 127 always-loaded <video>
+  // elements with preload="metadata" easily blow past Safari's tab limit.
   return `<div class="hot-shots hot-shots-${variant}"
               data-hot-shots="${baseUrl}"
               data-hot-shots-count="${count}"
@@ -1088,9 +1095,8 @@ function hotShots(baseUrl, title, variant, count, starts = [], cums = []) {
               data-hot-shots-cums="${cumsAttr}"
               aria-label="${escapeHtml(title)}">
     <video class="hot-shots-video"
-           src="${previewSrc}"
            poster="${poster}"
-           playsinline preload="metadata" muted loop></video>
+           playsinline preload="none" muted loop></video>
   </div>`;
 }
 
