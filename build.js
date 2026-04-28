@@ -615,6 +615,7 @@ async function generateThumbs(posts) {
   // Phase 1: gather state for all posts in parallel. Pure I/O — read each
   // post's .build-meta.json, decide if it's cached. ffprobe and hash are only
   // called when needed (cache miss / mtime mismatch).
+  let phase1Done = 0;
   const states = await Promise.all(posts.map(async (post) => {
     const srcPath = join(CONTENT_DIR, post.relPath);
     const destDir = post.outDir;
@@ -665,8 +666,11 @@ async function generateThumbs(posts) {
       }
     }
 
+    phase1Done++;
+    progress(`  checking cache ${phase1Done}/${posts.length}`);
     return { post, srcPath, destDir, srcMs, sidecarMs, heatMs, meta, plan, expectedFiles, fresh, buildMeta, mtimeRefresh };
   }));
+  progressClear();
 
   // Phase 2: handle the cached posts in parallel (just file housekeeping —
   // restore previewPlan onto the post so templates have it, and tidy any
@@ -1347,9 +1351,9 @@ async function build() {
   await mkdir(OUT_DIR, { recursive: true });
   await mkdir(join(OUT_DIR, POST_DIR), { recursive: true });
   await mkdir(META_ROOT, { recursive: true });
-  // Ensure each post has its meta dir (so the API can validate against it
-  // even before any shots/heat have been recorded).
-  for (const post of posts) await mkdir(post.metaDir, { recursive: true });
+  // Each post's meta dir, in parallel (was sequential — 519× await mkdir
+  // takes 2-3s of silent waiting).
+  await Promise.all(posts.map((p) => mkdir(p.metaDir, { recursive: true })));
 
   // 3b. One-shot cleanup of the previous layout — _site/media/ and _site/thumbs/
   // were used before everything moved into _site/post/<slug>/. Just delete them
@@ -1367,27 +1371,36 @@ async function build() {
   //    are instant, and the files look like regular files to the static server
   //    (unlike symlinks, which serve refuses when they point outside the root).
   //    Done in parallel: pure I/O, no reason to serialise.
+  let linkDone = 0;
   const linkResults = await Promise.all(posts.map(async (post) => {
     const srcPath = join(CONTENT_DIR, post.relPath);
-    if (!existsSync(srcPath)) return "missing";
+    if (!existsSync(srcPath)) {
+      linkDone++; progress(`  linking media ${linkDone}/${posts.length}`);
+      return "missing";
+    }
     await mkdir(post.outDir, { recursive: true });
     const destPath = join(post.outDir, post.videoFile);
 
     try {
       const [destStat, srcStat] = await Promise.all([lstat(destPath), stat(srcPath)]);
-      if (!destStat.isSymbolicLink() && destStat.ino === srcStat.ino) return "skipped";
+      if (!destStat.isSymbolicLink() && destStat.ino === srcStat.ino) {
+        linkDone++; progress(`  linking media ${linkDone}/${posts.length}`);
+        return "skipped";
+      }
       await rm(destPath, { force: true });
     } catch { /* doesn't exist — fine */ }
 
     try {
       await link(srcPath, destPath);
+      linkDone++; progress(`  linking media ${linkDone}/${posts.length}`);
       return "linked";
     } catch {
-      // Hardlinks can't cross filesystems (EXDEV) or may be unsupported — fall back to copy.
       await copyFile(srcPath, destPath);
+      linkDone++; progress(`  linking media ${linkDone}/${posts.length}`);
       return "copied";
     }
   }));
+  progressClear();
   if (posts.length > 0) {
     const counts = { linked: 0, skipped: 0, copied: 0, missing: 0 };
     for (const r of linkResults) counts[r] = (counts[r] || 0) + 1;
