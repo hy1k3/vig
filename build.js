@@ -8,7 +8,7 @@
 
 import { readdir, readFile, writeFile, mkdir, copyFile, symlink, link, lstat, rm, stat } from "fs/promises";
 import { join, extname, basename, dirname, relative, resolve, sep, posix } from "path";
-import { existsSync, createReadStream } from "fs";
+import { existsSync } from "fs";
 import { spawn } from "child_process";
 import { createHash } from "crypto";
 import { fileURLToPath } from "url";
@@ -174,19 +174,6 @@ function slugHash(s) {
   return Math.abs(h);
 }
 
-// SHA-1 of a file's content, hex-truncated to 16 chars (64 bits — plenty for
-// cache validation). Used as a fallback when the mtime fast-path says "stale"
-// but the content might actually be unchanged (Spotlight reindexing, Time
-// Machine restore, Drive sync, etc. all touch mtimes without changing bytes).
-function hashFile(path) {
-  return new Promise((resolve, reject) => {
-    const h = createHash("sha1");
-    const s = createReadStream(path);
-    s.on("data", (chunk) => h.update(chunk));
-    s.on("end", () => resolve(h.digest("hex").slice(0, 16)));
-    s.on("error", reject);
-  });
-}
 
 // ─── ffmpeg: poster frame extraction ─────────────────────────────────────────
 
@@ -622,18 +609,16 @@ async function generateThumbs(posts) {
     const buildMeta = await readBuildMeta(destDir);
     const mtimeMatches = !!(buildMeta && buildMeta.srcMtime === srcMs);
 
-    // mtime-touch fallback: if mtime moved but a hash is on file, verify
-    // content. If hash matches, refresh mtime and treat as fresh.
-    let hashRefresh = null; // { hash } if we want to update buildMeta with this
+    // mtime-touch fallback: if mtime moved but file size is identical to the
+    // cached size, the content is virtually certainly unchanged (Spotlight,
+    // Time Machine, Drive Sync, etc. touch mtimes without writing bytes).
+    // For videos especially, two distinct files happening to have the exact
+    // same byte count is so unlikely it's not worth hashing for.
+    let mtimeRefresh = false;
     let contentUnchanged = mtimeMatches;
-    if (!mtimeMatches && buildMeta?.srcHash) {
-      try {
-        const currentHash = await hashFile(srcPath);
-        if (currentHash === buildMeta.srcHash) {
-          contentUnchanged = true;
-          hashRefresh = { hash: currentHash };
-        }
-      } catch { /* hash failed — treat as stale */ }
+    if (!mtimeMatches && buildMeta && buildMeta.srcSize === post.size) {
+      contentUnchanged = true;
+      mtimeRefresh = true;  // refresh mtime in manifest so next run takes the fast path
     }
 
     // Use cached metadata when source content is unchanged.
@@ -664,7 +649,7 @@ async function generateThumbs(posts) {
       }
     }
 
-    return { post, srcPath, destDir, srcMs, sidecarMs, heatMs, meta, plan, expectedFiles, fresh, buildMeta, hashRefresh };
+    return { post, srcPath, destDir, srcMs, sidecarMs, heatMs, meta, plan, expectedFiles, fresh, buildMeta, mtimeRefresh };
   }));
 
   // Phase 2: handle the cached posts in parallel (just file housekeeping —
@@ -680,11 +665,10 @@ async function generateThumbs(posts) {
     skipped++;
     tierCounts[s.post.qualityTier] = (tierCounts[s.post.qualityTier] || 0) + 1;
     await cleanupStaleFiles(s.destDir, s.expectedFiles);
-    if (s.hashRefresh) {
+    if (s.mtimeRefresh) {
       await writeBuildMeta(s.destDir, {
         ...s.buildMeta,
         srcMtime: s.srcMs,
-        srcHash: s.hashRefresh.hash,
       });
     }
   }));
@@ -704,13 +688,7 @@ async function generateThumbs(posts) {
     tierCounts[s.post.qualityTier] = (tierCounts[s.post.qualityTier] || 0) + 1;
 
     await cleanupStaleFiles(s.destDir, s.expectedFiles);
-    // Hash in parallel with the encode — both read the source file, OS handles
-    // the concurrency fine, and the hash usually finishes first so it doesn't
-    // add wall-clock time to the build.
-    const [success, srcHash] = await Promise.all([
-      extractPreviews(s.post, s.srcPath, s.destDir, s.meta),
-      hashFile(s.srcPath).catch(() => null),
-    ]);
+    const success = await extractPreviews(s.post, s.srcPath, s.destDir, s.meta);
     if (success) {
       s.post.hasThumb = true;
       generated++;
@@ -718,7 +696,7 @@ async function generateThumbs(posts) {
       await writeBuildMeta(s.destDir, {
         pipelineHash,
         srcMtime: s.srcMs,
-        srcHash,
+        srcSize: s.post.size,
         sidecarMtime: s.sidecarMs,
         heatMtime: s.heatMs,
         frameCount: s.plan.ranges.length,
