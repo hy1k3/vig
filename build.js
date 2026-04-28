@@ -90,6 +90,22 @@ async function walkVideos(dir, base = dir) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// Single-line live progress, only when stdout is a TTY (so piped/spawned
+// builds don't get \r escapes mixed into their logs).
+function progress(line) {
+  if (process.stdout.isTTY) process.stdout.write("\r\x1b[K" + line);
+}
+function progressClear() {
+  if (process.stdout.isTTY) process.stdout.write("\r\x1b[K");
+}
+function formatDuration(seconds) {
+  if (!isFinite(seconds) || seconds < 0) return "";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
 function slugify(str) {
   let s = String(str)
     .toLowerCase()
@@ -675,7 +691,15 @@ async function generateThumbs(posts) {
 
   // Phase 3: stale posts — sequential because ffmpeg has trouble with
   // multiple concurrent encodes against the same source filesystem.
-  for (const s of states.filter((s) => !s.fresh)) {
+  const stale = states.filter((s) => !s.fresh);
+  const phaseStart = Date.now();
+  for (let i = 0; i < stale.length; i++) {
+    const s = stale[i];
+    const pct = stale.length > 0 ? Math.floor((i / stale.length) * 100) : 0;
+    const elapsed = (Date.now() - phaseStart) / 1000;
+    const eta = i > 0 ? (elapsed / i) * (stale.length - i) : null;
+    const etaStr = eta != null ? `  · ~${formatDuration(eta)} left` : "";
+    progress(`  encoding ${i + 1}/${stale.length} (${pct}%)${etaStr}  ${s.post.title}`);
     // No cached metadata? Probe now (this is the first time we see this video).
     if (!s.meta) {
       s.meta = await getMetadata(s.srcPath);
@@ -708,6 +732,7 @@ async function generateThumbs(posts) {
       console.warn(`  previews failed: ${s.post.relPath}`);
     }
   }
+  progressClear();
 
   const parts = [];
   if (generated) parts.push(`${generated} new`);
