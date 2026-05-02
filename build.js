@@ -811,7 +811,31 @@ function videoPlayerScript() {
 
       // Heat tracking — needs the inner <video> element from the player's open shadow DOM.
       var video = player.shadowRoot && player.shadowRoot.querySelector('.vp-video');
-      if (video) bindHeat(video, slug);
+      if (video) {
+        bindHeat(video, slug);
+        bindAudioPersistence(video);
+      }
+    }
+
+    // Mute + volume are global per origin: changing them on one detail page
+    // carries over to every other detail page (and reopens of the same one).
+    // Stored in localStorage so it survives full reloads.
+    function bindAudioPersistence(video) {
+      try {
+        var stored = JSON.parse(localStorage.getItem('vig:audio') || 'null');
+        if (stored) {
+          if (typeof stored.volume === 'number') video.volume = stored.volume;
+          if (typeof stored.muted === 'boolean') video.muted = stored.muted;
+        }
+      } catch (e) {}
+      video.addEventListener('volumechange', function() {
+        try {
+          localStorage.setItem('vig:audio', JSON.stringify({
+            volume: video.volume,
+            muted: video.muted,
+          }));
+        } catch (e) {}
+      });
     }
 
     function bindHeat(video, slug) {
